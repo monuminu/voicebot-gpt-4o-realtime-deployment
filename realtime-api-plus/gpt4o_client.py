@@ -6,7 +6,7 @@ import base64
 import logging
 import os
 from typing import Optional
-
+import json
 import aiohttp
 import rtclient
 from azure.core.credentials import AzureKeyCredential
@@ -16,11 +16,11 @@ from data_models import Session
 from realtime_audio_session_handler import RealtimeAudioSessionHandler
 from rtclient import RTClient
 from rtclient import models as rt_models
-
+from tools import tools
 logger = logging.getLogger(__name__)
-endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-key = os.getenv("AZURE_OPENAI_KEY")
-deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+key = os.get("AZURE_OPENAI_KEY")
+deployment = os.environ["AZURE_OPENAI_DEPLOYMENT"]
 # note: gpt4o real-time + avatar (audio driven) is in preview
 enable_avatar = os.getenv("ENABLE_AVATAR")
 avatar_service_host = os.getenv("AVATAR_SERVICE_HOST", "")
@@ -85,8 +85,8 @@ class GPT4OClient:
             output_audio_format=session_config.output_audio_format,
             input_audio_transcription=session_config.input_audio_transcription,
             turn_detection=session_config.turn_detection,
-            tools=session_config.tools,
-            tool_choice=session_config.tool_choice,
+            tools=[tool[0] for tool in tools],
+            tool_choice="auto",
             temperature=session_config.temperature,
             max_response_output_tokens=session_config.max_response_output_tokens,
         )
@@ -158,10 +158,21 @@ class GPT4OClient:
 
                 await asyncio.gather(on_audio_chunk(m.audio_chunks()), on_transcript_chunk(m.transcript_chunks()))
             elif type(m) is rtclient.RTTextContent:
-                raise NotImplementedError
+                return
         await self._realtime_handler.on_response_content_part_done(response_id, item_id, m.content_index, m._part)
         await self._realtime_handler.on_response_output_item_done(response_id, message._item)
 
+    async def receive_function_call_item(self, item: rtclient.RTFunctionCallItem, response_id: str):
+        await self._realtime_handler.on_response_output_item_added(item.id, item._item)
+        async for m in item:
+            await self._realtime_handler.on_response_function_call_arguments_delta(response_id, item.id, call_id=item.call_id, delta=m)
+        await self._realtime_handler.on_response_function_call_arguments_done(
+            response_id, item.id, call_id=item.call_id, name=item.function_name, arguments=item.arguments)
+        await self._realtime_handler.on_response_output_item_done(item.id, item._item)
+        function_to_call = [tool[1] for tool in tools if tool[0]["name"] == item.function_name][0]
+        result = await function_to_call(json.loads(item.arguments))
+        await self._client.send_item(item=rt_models.FunctionCallOutputItem(call_id=item.call_id, output=result))
+                
     async def receive_response(self, response: rtclient.RTResponse):
         await self._realtime_handler.on_response_created(response._response)
         response_id = response.id
@@ -171,6 +182,11 @@ class GPT4OClient:
                 await self._realtime_handler.on_response_output_item_added(response_id, item._item)
                 await self._realtime_handler.on_conversation_item_created(item.previous_id, item._item)
                 t = asyncio.create_task(self.receive_message_item(item, response_id))
+                tasks.append(t)
+            elif type(item) is rtclient.RTFunctionCallItem:
+                await self._realtime_handler.on_response_output_item_added(item.id, item._item)
+                await self._realtime_handler.on_conversation_item_created(item.previous_id, item._item)
+                t = asyncio.create_task(self.receive_function_call_item(item, response_id=response_id))
                 tasks.append(t)
             elif item.type == "audio":
                 pass
