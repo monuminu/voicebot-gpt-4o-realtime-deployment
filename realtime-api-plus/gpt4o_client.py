@@ -19,7 +19,7 @@ from rtclient import models as rt_models
 from tools import tools
 logger = logging.getLogger(__name__)
 endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
-key = os.get("AZURE_OPENAI_KEY")
+key = os.environ.get("AZURE_OPENAI_KEY")
 deployment = os.environ["AZURE_OPENAI_DEPLOYMENT"]
 # note: gpt4o real-time + avatar (audio driven) is in preview
 enable_avatar = os.getenv("ENABLE_AVATAR")

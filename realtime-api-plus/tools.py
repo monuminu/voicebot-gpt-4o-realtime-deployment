@@ -9,9 +9,9 @@ from openai import AzureOpenAI
 import os
 
 search_client = SearchClient(
-    endpoint=os.environ["AZURE_SEARCH_ENDPOINT"],
-    index_name=os.environ["INDEX_NAME"],
-    credential=AzureKeyCredential(os.environ["AZURE_SEARCH_KEY"]) 
+    endpoint=os.environ.get("AZURE_SEARCH_ENDPOINT"),
+    index_name=os.environ.get("INDEX_NAME"),
+    credential=AzureKeyCredential(os.environ.get("AZURE_SEARCH_KEY")) 
 )
 
 fetch_relevant_documents_def = {
